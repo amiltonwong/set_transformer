@@ -1,5 +1,6 @@
 import numpy as np
 import h5py
+import os
 
 
 def rotate_z(theta, x):
@@ -37,20 +38,42 @@ def standardize(x):
 class ModelFetcher(object):
     def __init__(self, fname, batch_size, down_sample=10, do_standardize=True, do_augmentation=False):
 
-        self.fname = fname
-        self.batch_size = batch_size
-        self.down_sample = down_sample
+        self.fname = fname # "XXX.h5"
+        self.batch_size = batch_size # 12
+        self.down_sample = down_sample # 10000/1000=10
 
         with h5py.File(fname, 'r') as f:
-            self._train_data = np.array(f['tr_cloud'])
-            self._train_label = np.array(f['tr_labels'])
-            self._test_data = np.array(f['test_cloud'])
-            self._test_label = np.array(f['test_labels'])
+            self._train_data = np.array(f['tr_cloud']) # [9843, 10000, 6]
+            self._train_label = np.array(f['tr_label'])
+            self._test_data = np.array(f['test_cloud']) # [2468,10000,3]
+            self._test_label = np.array(f['test_label'])
+        """
+        # load at once from "modelnet40_normal_resampled" /media/root/WDdata/dataset/modelnet40_dataset/modelnet40_normal_resampled
+        root = "/media/root/WDdata/dataset/modelnet40_dataset/modelnet40_normal_resampled"
+        catfile = os.path.join(root, 'modelnet40_shape_names.txt')  # "./data/modelnet40_normal_resampled/modelnet40_shape_names.txt"
+        cat = [line.rstrip() for line in open(catfile)] # read each line: ['airplane', 'bathtub', 'bed', ...]
+        classes = dict(zip(cat, range(len(cat)))) # {'airplane':0, 'bathtub':1, ...}
+        shape_ids = {}
+        shape_ids['train'] = [line.rstrip() for line in open(os.path.join(root, 'modelnet40_train.txt'))] # extract shape_ids['train']: ['airplane_0001.txt', 'airplane_0002.txt', ...]
+        shape_ids['test'] = [line.rstrip() for line in open(os.path.join(root, 'modelnet40_test.txt'))] # shape_ids['test']: ['airplane_0627.txt', 'airplane_0628.txt', ...]
+        train_shape_names = ['_'.join(x.split('_')[0:-1]) for x in shape_ids['train']]
+        test_shape_names = ['_'.join(x.split('_')[0:-1]) for x in shape_ids['test']]
+        train_datapath = [(train_shape_names[i], os.path.join(root, train_shape_names[i], shape_ids['train'][i]) + '.txt') for i
+                    in range(len(shape_ids['train']))] # [("airplane", "./data/modelnet40_normal_resampled/airplane/airplane_0001.txt"), ]
+        test_datapath = [
+            (test_shape_names[i], os.path.join(root, test_shape_names[i], shape_ids['test'][i]) + '.txt') for i
+            in range(len(shape_ids['test']))]
+        for i in range(len(train_datapath)):
+            point_set = np.loadtxt(train_datapath[i][1], delimiter=',').astype(np.float32) # point_set: [10000, 6]
+        """
 
-        self.num_classes = np.max(self._train_label) + 1
+        self._train_data = self._train_data.reshape(-1, 10000, 3)
+        self._test_data = self._test_data.reshape(-1, 10000, 3)
 
-        self.num_train_batches = len(self._train_data) // self.batch_size
-        self.num_test_batches = len(self._test_data) // self.batch_size
+        self.num_classes = np.max(self._train_label) + 1 # 40
+
+        self.num_train_batches = len(self._train_data) // self.batch_size # 9843//12=820
+        self.num_test_batches = len(self._test_data) // self.batch_size # 2468//12= 205
 
         self.prep1 = standardize if do_standardize else lambda x: x
         self.prep2 = (lambda x: augment(self.prep1(x))) if do_augmentation else self.prep1
@@ -59,7 +82,7 @@ class ModelFetcher(object):
             'Batch size larger than number of training examples'
 
         # select the subset of points to use throughout beforehand
-        self.perm = np.random.permutation(self._train_data.shape[1])[::self.down_sample]
+        self.perm = np.random.permutation(self._train_data.shape[1])[::self.down_sample] # np.random.permutation(10000)[::10]
 
     def train_data(self):
         rng_state = np.random.get_state()
@@ -91,3 +114,14 @@ class ModelFetcher(object):
             yield self.prep1(self._test_data[start:end, 1::self.down_sample]), batch_card, self._test_label[start:end]
             start = end
             end += self.batch_size
+
+if __name__ == '__main__':
+    # fname, batch_size, down_sample=10, do_standardize=True, do_augmentation=False
+    num_pts = 1000
+    generator = ModelFetcher(
+        fname="./ModelNet40_cloud.h5",
+        batch_size=12,
+        down_sample=int(10000 / num_pts), # 10000/1000=10
+        do_standardize=True,
+        do_augmentation=(num_pts == 5000)
+    )
